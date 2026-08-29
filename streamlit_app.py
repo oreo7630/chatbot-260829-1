@@ -104,6 +104,11 @@ consulting_topic = st.sidebar.selectbox(
     ]
 )
 
+st.sidebar.divider()
+
+st.sidebar.header("🔊 음성 설정")
+voice_reply_enabled = st.sidebar.checkbox("답변을 음성으로 듣기", value=False)
+
 
 # --------------------------------------------------
 # AI 역할 설정
@@ -143,30 +148,32 @@ SYSTEM_PROMPT = f"""
 4. 어려운 용어(원천세, 4대보험, 부가세 예정고지 등)는
    처음 접하는 사람도 이해할 수 있게 쉽게 풀어서 설명하세요.
 5. 답변은 실행 가능한 체크리스트 형태로 정리하세요.
-6. 답변은 한국어로 작성하세요.
+6. 음성으로 읽힐 수 있으니 이모지나 특수기호(###, ** 등)는 최소화하고
+   자연스러운 구어체 문장으로 정리하세요.
+7. 답변은 한국어로 작성하세요.
 
 가능하면 다음 형식을 사용하세요.
 
-### 📋 지금 챙겨야 할 것
+지금 챙겨야 할 것
 사용자 상황에 맞는 항목을 우선순위대로 정리합니다.
 
-### ⚠️ 놓치기 쉬운 부분
+놓치기 쉬운 부분
 1인 운영자가 특히 자주 놓치는 부분을 짚어줍니다.
 
-### 🧾 확인이 필요한 부분
+확인이 필요한 부분
 정확한 날짜/금액/자격 요건 등 공식 채널 확인이 필요한 부분을
 명확히 표시합니다.
 
-### ✅ 다음 행동
+다음 행동
 지금 바로 할 수 있는 구체적인 행동 1~3개를 제안합니다.
 
-### ❓ 추가로 알려주시면 좋은 정보
+추가로 알려주시면 좋은 정보
 더 정확한 안내를 위해 필요한 정보를 질문합니다.
 """
 
 
 # --------------------------------------------------
-# 음성 -> 텍스트 변환 함수
+# 음성 변환 함수
 # --------------------------------------------------
 
 def transcribe_audio(audio_bytes: bytes) -> str:
@@ -179,6 +186,16 @@ def transcribe_audio(audio_bytes: bytes) -> str:
         language="ko",
     )
     return transcript.text
+
+
+def synthesize_speech(text: str) -> bytes:
+    """텍스트를 음성으로 변환 (TTS API)."""
+    response = client.audio.speech.create(
+        model="tts-1",
+        voice="alloy",
+        input=text,
+    )
+    return response.content
 
 
 # --------------------------------------------------
@@ -220,6 +237,8 @@ for message in st.session_state.messages:
 
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if message["role"] == "assistant" and "audio" in message:
+            st.audio(message["audio"], format="audio/mp3")
 
 
 # --------------------------------------------------
@@ -312,11 +331,21 @@ if prompt:
             response_generator()
         )
 
-
-    # AI 답변 저장
-    st.session_state.messages.append(
-        {
+        assistant_message = {
             "role": "assistant",
             "content": response
         }
-    )
+
+        # 답변을 음성으로 생성 (설정 켜져 있을 때만)
+        if voice_reply_enabled:
+            with st.spinner("음성 생성 중..."):
+                try:
+                    audio_bytes = synthesize_speech(response)
+                    st.audio(audio_bytes, format="audio/mp3")
+                    assistant_message["audio"] = audio_bytes
+                except Exception as e:
+                    st.warning(f"음성 생성 중 오류가 발생했습니다: {e}")
+
+
+    # AI 답변 저장
+    st.session_state.messages.append(assistant_message)
