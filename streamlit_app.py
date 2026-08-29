@@ -1,6 +1,10 @@
+import hashlib
+from datetime import date
+from io import BytesIO
+
 import streamlit as st
 from openai import OpenAI
-from datetime import date
+from streamlit_mic_recorder import mic_recorder
 
 # --------------------------------------------------
 # 페이지 설정
@@ -162,6 +166,22 @@ SYSTEM_PROMPT = f"""
 
 
 # --------------------------------------------------
+# 음성 -> 텍스트 변환 함수
+# --------------------------------------------------
+
+def transcribe_audio(audio_bytes: bytes) -> str:
+    """녹음된 음성을 텍스트로 변환 (Whisper API)."""
+    audio_file = BytesIO(audio_bytes)
+    audio_file.name = "recording.wav"
+    transcript = client.audio.transcriptions.create(
+        model="whisper-1",
+        file=audio_file,
+        language="ko",
+    )
+    return transcript.text
+
+
+# --------------------------------------------------
 # 대화 기록
 # --------------------------------------------------
 
@@ -183,10 +203,13 @@ if "messages" not in st.session_state:
 - 사업자등록 정보가 바뀌면 어디에 신고해야 하나요?
 
 왼쪽에서 우리 회사 정보를 먼저 입력해주시면
-더 정확하게 챙겨드릴 수 있어요. 🧭
+더 정확하게 챙겨드릴 수 있어요. 텍스트든 음성이든 편하게 물어보세요. 🧭
 """
         }
     ]
+
+if "last_audio_hash" not in st.session_state:
+    st.session_state.last_audio_hash = None
 
 
 # --------------------------------------------------
@@ -200,12 +223,35 @@ for message in st.session_state.messages:
 
 
 # --------------------------------------------------
-# 사용자 질문
+# 사용자 질문: 텍스트 + 음성
 # --------------------------------------------------
 
-prompt = st.chat_input(
-    "궁금한 걸 편하게 물어보세요... (예: 이번 달에 뭐 챙겨야 돼?)"
+text_prompt = st.chat_input(
+    "창업 아이디어나 고민을 입력해주세요..."
 )
+
+st.caption("또는 마이크로 말씀해주세요 🎤")
+audio_data = mic_recorder(
+    start_prompt="🎤 녹음 시작",
+    stop_prompt="⏹ 녹음 종료",
+    just_once=False,
+    key="ops_recorder",
+)
+
+prompt = None
+
+if text_prompt:
+    prompt = text_prompt
+
+elif audio_data and audio_data.get("bytes"):
+    audio_hash = hashlib.md5(audio_data["bytes"]).hexdigest()
+    if audio_hash != st.session_state.last_audio_hash:
+        st.session_state.last_audio_hash = audio_hash
+        with st.spinner("음성을 텍스트로 변환 중..."):
+            try:
+                prompt = transcribe_audio(audio_data["bytes"])
+            except Exception as e:
+                st.error(f"음성 인식 중 오류가 발생했습니다: {e}")
 
 if prompt:
 
